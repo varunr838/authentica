@@ -1,0 +1,30 @@
+# Python artifacts — never commit large binary files
+artifacts/srs.params
+artifacts/pk.key
+artifacts/vk.key
+artifacts/model.compiled
+artifacts/witness.json
+
+# Keep proof and ONNX for demo purposes (optional)
+# artifacts/proof.json
+# artifacts/network.onnx
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp

@@ -1,0 +1,18 @@
+# ============================================================
+#  Authentica — zkML Engine  |  Phase 1 Dependencies
+# ============================================================
+
+# ----- Deep Learning & Export -----
+torch>=2.1.0
+torchvision>=0.16.0
+onnx>=1.15.0
+onnxruntime>=1.16.0          # local ONNX inference sanity-check
+
+# ----- zkML / EZKL -----
+ezkl>=9.1.0                  # Zero-Knowledge ML proof system
+
+# ----- Utilities -----
+numpy>=1.24.0
+Pillow>=10.0.0               # image I/O for input.json generation
+rich>=13.0.0                 # pretty console output
+click>=8.1.0                 # CLI wrapper (optional)
