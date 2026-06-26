@@ -1,0 +1,21 @@
+# Environment — NEVER commit real keys
+.env
+
+# Hardhat build artifacts
+artifacts/
+cache/
+typechain-types/
+
+# Gas reporter
+gas-report.txt
+
+# Node modules
+node_modules/
+
+# Deployment records (optional — you may want to commit these)
+# deployments/
+
+# IDE
+.vscode/
+.idea/
+*.swp
