@@ -1,0 +1,29 @@
+# ============================================================
+#  Authentica — Local Publisher Backend  |  Phase 3
+# ============================================================
+
+# ── Web framework ─────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9        # required for FastAPI file uploads
+aiofiles>=23.2.1               # async file I/O
+
+# ── Video processing ──────────────────────────────────────────
+opencv-python>=4.9.0.80        # frame extraction & video reassembly
+numpy>=1.24.0
+Pillow>=10.0.0                 # image helpers
+
+# ── ONNX inference (runs the pixelation model locally) ────────
+onnxruntime>=1.16.0
+
+# ── Blockchain ────────────────────────────────────────────────
+web3>=6.15.0                   # web3.py v6 — async-compatible
+eth-account>=0.11.0
+
+# ── Cryptography / hashing ────────────────────────────────────
+pycryptodome>=3.20.0           # SHA-256 helpers (also available via hashlib)
+
+# ── Utilities ─────────────────────────────────────────────────
+python-dotenv>=1.0.0           # load .env
+rich>=13.0.0                   # pretty logging
+pydantic>=2.6.0                # request/response models (FastAPI uses this)
