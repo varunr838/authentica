@@ -59,10 +59,6 @@
 
 ### Prerequisites
 
-- Python 3.9–3.11
-- Phase 1 (`zkml-engine/`) completed — `network.onnx`, compiled circuit, keys all present
-- Phase 2 (`smart-contracts/`) deployed — `deployments/localhost.json` exists
-
 ### 1. Install
 
 ```bash
@@ -172,7 +168,3 @@ EZKL `proof.json` varies slightly across versions. `blockchain_publisher.py` han
 - `instances` as nested lists of hex strings or plain ints
 
 ---
-
-## Next Phases
-- **Phase 4** — Merkle root anchoring + block hash binding
-- **Phase 5** — Frontend dashboard
