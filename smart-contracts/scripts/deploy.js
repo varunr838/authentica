@@ -64,7 +64,12 @@ async function main() {
   console.log("     Replace contracts/Verifier.sol with the EZKL-generated file,");
   console.log("     then re-run this script for a production deployment.\n");
 
-  const VerifierFactory = await ethers.getContractFactory("Verifier");
+  let VerifierFactory;
+  try {
+    VerifierFactory = await ethers.getContractFactory("Halo2Verifier");
+  } catch (e) {
+    VerifierFactory = await ethers.getContractFactory("Verifier");
+  }
   const verifier        = await VerifierFactory.deploy();
   await verifier.waitForDeployment();
 

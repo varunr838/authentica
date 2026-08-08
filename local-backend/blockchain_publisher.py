@@ -49,7 +49,7 @@ RPC_URL     = os.getenv("WEB3_RPC_URL",          "http://127.0.0.1:8545")
 PRIVATE_KEY = os.getenv("PUBLISHER_PRIVATE_KEY", "0x" + "0" * 64)
 CHAIN_ID    = int(os.getenv("CHAIN_ID",          "1337"))
 NETWORK     = os.getenv("NETWORK_NAME",          "localhost")
-GAS_LIMIT   = int(os.getenv("GAS_LIMIT",         "800000"))
+GAS_LIMIT   = int(os.getenv("GAS_LIMIT",         "15000000"))
 
 
 # ── ABI / address loaders ─────────────────────────────────────────────────────
@@ -126,16 +126,26 @@ def _parse_proof(proof_json_path: pathlib.Path) -> tuple[bytes, list[int]]:
     raw_instances = data.get("instances", [])
     instances: list[int] = []
 
+    def _le_hex_to_int(h: str) -> int:
+        """Convert an EZKL little-endian hex field element to a Python int."""
+        hex_str = h.removeprefix("0x")
+        if len(hex_str) % 2:
+            hex_str = "0" + hex_str
+        return int(bytes.fromhex(hex_str)[::-1].hex(), 16)
+
     for row in raw_instances:
         if isinstance(row, list):
             for elem in row:
-                # field element can be hex string or int
+                # EZKL field elements are little-endian hex strings
                 if isinstance(elem, str):
-                    instances.append(int(elem, 16))
+                    instances.append(_le_hex_to_int(elem))
                 else:
                     instances.append(int(elem))
         elif isinstance(row, (str, int)):
-            instances.append(int(row, 16) if isinstance(row, str) else int(row))
+            if isinstance(row, str):
+                instances.append(_le_hex_to_int(row))
+            else:
+                instances.append(int(row))
 
     if not instances:
         raise ValueError(

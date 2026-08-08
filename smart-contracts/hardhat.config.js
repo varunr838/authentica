@@ -20,6 +20,12 @@ module.exports = {
       optimizer: {
         enabled: true,
         runs: 200,          // optimise for deployment cost vs. call cost balance
+        details: {
+          yul: true,
+          yulDetails: {
+            optimizerSteps: "u", // Required to compile large EZKL verifiers without stack too deep errors
+          }
+        }
       },
       viaIR: true,          // required for EZKL-generated verifiers (large contracts)
     },

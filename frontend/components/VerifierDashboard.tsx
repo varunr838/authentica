@@ -1,457 +1,438 @@
 "use client";
 /**
- * components/VerifierDashboard.tsx  —  Authentica Phase 4
- * =========================================================
- * The public verifier portal — reads VideoVerified events from the
- * blockchain and lets anyone cryptographically verify each entry.
+ * components/VerifierDashboard.tsx  —  Authentica
+ * =================================================
+ * Allows anyone to verify a blurred video's authenticity:
+ *   1. Drop / select the blurred video file
+ *   2. Browser computes its SHA-256 hash locally
+ *   3. isVerified(hash) is called on the VideoRegistry contract
+ *   4. If found: getRecord(hash) shows full on-chain details
+ *
+ * No proof.json needed — the video hash IS the lookup key.
  */
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  usePublicClient,
-  useChainId,
-  useAccount,
-} from "wagmi";
-import { getAddress, formatUnits } from "viem";
-import {
-  VIDEO_REGISTRY_ABI,
-  getContractAddress,
-  type VideoRecord,
-} from "@/utils/web3Config";
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-interface FeedEntry {
-  videoHash:   `0x${string}`;
-  publisher:   `0x${string}`;
-  proofDigest: `0x${string}`;
-  timestamp:   bigint;
-  instances:   readonly bigint[];
-  blockNumber: bigint;
-  // Local verification state
-  verifyState: "idle" | "loading" | "valid" | "invalid" | "error";
-  verifyMsg?:  string;
-  record?:     VideoRecord;
-}
+import { usePublicClient, useChainId } from "wagmi";
+import { VIDEO_REGISTRY_ABI, getContractAddress, type VideoRecord } from "@/utils/web3Config";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function shortenHash(h: string, chars = 6) {
-  return `${h.slice(0, chars + 2)}…${h.slice(-chars)}`;
+function short(h: string, n = 6) {
+  return `${h.slice(0, n + 2)}…${h.slice(-n)}`;
+}
+function fmtDate(ts: bigint) {
+  return new Date(Number(ts) * 1000).toLocaleString();
+}
+function fmtBytes(bytes: number) {
+  if (bytes < 1024)       return `${bytes} B`;
+  if (bytes < 1024 ** 2)  return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
 }
 
-function timeAgo(timestamp: bigint): string {
-  const diff = Math.floor(Date.now() / 1000) - Number(timestamp);
-  if (diff < 60)   return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400)return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
+/** Compute SHA-256 of an ArrayBuffer, return hex string (no 0x prefix). */
+async function sha256hex(buf: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
+
+type Stage =
+  | { kind: "idle" }
+  | { kind: "hashing"; fileName: string; fileSize: number }
+  | { kind: "querying"; hash: string; fileName: string; fileSize: number }
+  | { kind: "found";   hash: string; record: VideoRecord; fileName: string; fileSize: number }
+  | { kind: "notfound"; hash: string; fileName: string; fileSize: number }
+  | { kind: "error";  msg: string };
 
 // ── Sub-components ────────────────────────────────────────────────────────────
-function AuthenticaBadge({ state, msg }: { state: FeedEntry["verifyState"]; msg?: string }) {
-  if (state === "idle")    return null;
-  if (state === "loading") return (
-    <div className="flex items-center gap-2 text-slate-400 text-xs font-mono animate-pulse">
-      <motion.div
-        animate={{ rotate: 360 }}
-        transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-        className="w-3.5 h-3.5 border-2 border-slate-400 border-t-transparent rounded-full"
-      />
-      Verifying cryptographic proof…
+function Spinner({ size = 4 }: { size?: number }) {
+  return (
+    <motion.div
+      animate={{ rotate: 360 }}
+      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+      style={{ width: size * 4, height: size * 4 }}
+      className="border-2 border-current border-t-transparent rounded-full flex-shrink-0"
+    />
+  );
+}
+
+function CopyBtn({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+      className="ml-1.5 text-slate-600 hover:text-slate-300 transition-colors text-xs"
+      title="Copy to clipboard"
+    >
+      {copied ? "✓" : "⎘"}
+    </button>
+  );
+}
+
+function InfoRow({ label, value, mono = true, copyable = false }: {
+  label: string; value: string; mono?: boolean; copyable?: boolean;
+}) {
+  return (
+    <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
+      <p className="text-slate-500 text-xs mb-0.5">{label}</p>
+      <p className={`text-slate-300 text-xs break-all ${mono ? "font-mono" : ""}`}>
+        {value}{copyable && <CopyBtn text={value} />}
+      </p>
     </div>
   );
+}
 
-  if (state === "valid") return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.8 }}
-      animate={{ opacity: 1, scale: 1 }}
-      className="flex items-start gap-3 p-3 rounded-xl bg-emerald-950/50 border border-emerald-700/50"
-    >
-      {/* Shield icon */}
-      <div className="flex-shrink-0 w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mt-0.5">
-        <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-        </svg>
-      </div>
-      <div>
-        <p className="text-emerald-300 font-semibold text-xs">
-          ✓ Cryptographically Valid — Original Media Unaltered
-        </p>
-        <p className="text-slate-400 text-xs mt-0.5 font-mono">{msg}</p>
-      </div>
-    </motion.div>
-  );
+// ── Drop Zone ─────────────────────────────────────────────────────────────────
+function DropZone({ onFile }: { onFile: (f: File) => void }) {
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) onFile(file);
+  };
 
   return (
     <motion.div
-      initial={{ opacity: 0, scale: 0.9 }}
-      animate={{ opacity: 1, scale: 1 }}
-      className="flex items-center gap-2 p-3 rounded-xl bg-red-950/40 border border-red-800/50 text-red-300 text-xs font-mono"
+      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={handleDrop}
+      onClick={() => inputRef.current?.click()}
+      animate={{ borderColor: dragging ? "rgb(139,92,246)" : "rgb(51,65,85)" }}
+      className="relative flex flex-col items-center justify-center gap-4 py-14 px-6
+                 rounded-2xl border-2 border-dashed cursor-pointer
+                 bg-slate-950/40 hover:bg-slate-900/60 transition-colors text-center"
     >
-      <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.924-.833-2.464 0L4.35 16.5c-.77.833.192 2.5 1.732 2.5z" />
-      </svg>
-      {state === "invalid" ? "Invalid proof — verification failed on-chain." : `Error: ${msg}`}
+      <input
+        ref={inputRef}
+        type="file"
+        accept="video/*,.mp4,.mov,.avi,.mkv,.webm"
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }}
+      />
+
+      {/* Icon */}
+      <div className={`relative w-16 h-16 rounded-2xl flex items-center justify-center transition-colors
+                       ${dragging ? "bg-violet-900/40 border border-violet-600/50" : "bg-slate-800/60 border border-slate-700"}`}>
+        <AnimatePresence>
+          {dragging && (
+            <motion.div
+              initial={{ scale: 0.6, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.6, opacity: 0 }}
+              className="absolute inset-0 rounded-2xl bg-violet-500/10 blur-md"
+            />
+          )}
+        </AnimatePresence>
+        <svg className={`relative w-8 h-8 transition-colors ${dragging ? "text-violet-400" : "text-slate-500"}`}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+            d="M15 10l4.553-2.277A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+        </svg>
+      </div>
+
+      <div>
+        <p className="text-slate-200 font-medium text-sm">
+          {dragging ? "Drop to verify" : "Drop blurred video here"}
+        </p>
+        <p className="text-slate-500 text-xs mt-1">or click to browse · MP4, MOV, AVI, MKV, WebM</p>
+      </div>
+
+      <div className="flex items-center gap-2 text-xs text-slate-600 font-mono">
+        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+            d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+        </svg>
+        Hashed locally · never uploaded
+      </div>
     </motion.div>
   );
 }
 
-function VideoCard({
-  entry,
-  onVerify,
-  index,
-}: {
-  entry:    FeedEntry;
-  onVerify: (hash: `0x${string}`) => void;
-  index:    number;
+// ── Result panels ─────────────────────────────────────────────────────────────
+function FoundPanel({ record, hash, fileName, fileSize, onReset }: {
+  record: VideoRecord; hash: string; fileName: string; fileSize: number; onReset: () => void;
 }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 30 }}
+      initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.06, duration: 0.4, ease: "easeOut" }}
-      className="group rounded-2xl border border-slate-800 bg-slate-900/70 backdrop-blur-sm p-5
-                 hover:border-slate-700 transition-all duration-300 space-y-4"
+      className="space-y-4"
     >
-      {/* Top row */}
-      <div className="flex items-start gap-3">
-        {/* Video hash icon */}
-        <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-gradient-to-br from-slate-800 to-slate-900
-                        border border-slate-700 flex items-center justify-center text-lg">
-          🎬
-        </div>
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-mono text-sm text-slate-200 font-medium">
-              {shortenHash(entry.videoHash, 8)}
-            </span>
-            <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-600/30 text-emerald-400 text-xs">
-              Verified
-            </span>
+      {/* Big success banner */}
+      <div className="relative overflow-hidden rounded-2xl border border-emerald-700/40 bg-emerald-950/30 p-5">
+        <div className="absolute -top-8 -right-8 w-32 h-32 rounded-full bg-emerald-500/10 blur-2xl" />
+        <div className="relative flex items-start gap-4">
+          <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-emerald-500/20 border border-emerald-600/40 flex items-center justify-center">
+            <svg className="w-6 h-6 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
           </div>
-          <div className="flex items-center gap-3 mt-1 text-xs text-slate-500 font-mono">
-            <span title={entry.publisher}>{shortenHash(entry.publisher, 4)}</span>
-            <span>·</span>
-            <span>{timeAgo(entry.timestamp)}</span>
-            <span>·</span>
-            <span>Block {entry.blockNumber.toString()}</span>
+          <div>
+            <p className="text-emerald-300 font-bold text-base">✓ Authenticity Verified</p>
+            <p className="text-slate-400 text-sm mt-0.5">
+              This video was processed and certified by Authentica&apos;s zkML pipeline.
+              The blurring was cryptographically proven on-chain.
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Proof digest */}
-      <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
-        <p className="text-slate-500 text-xs mb-1">Proof digest (keccak256)</p>
-        <p className="font-mono text-xs text-slate-400 break-all">{entry.proofDigest}</p>
-      </div>
-
-      {/* Circuit instances preview */}
-      {entry.instances.length > 0 && (
-        <div>
-          <p className="text-slate-500 text-xs mb-1.5">Public circuit outputs ({entry.instances.length} instances)</p>
-          <div className="flex flex-wrap gap-1.5">
-            {entry.instances.slice(0, 8).map((inst, i) => (
-              <span
-                key={i}
-                className="px-2 py-0.5 rounded font-mono text-xs bg-slate-800 text-slate-400 border border-slate-700"
-              >
-                {inst.toString()}
-              </span>
-            ))}
-            {entry.instances.length > 8 && (
-              <span className="px-2 py-0.5 rounded font-mono text-xs text-slate-500">
-                +{entry.instances.length - 8} more
-              </span>
-            )}
-          </div>
+      {/* File info */}
+      <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-800/40 border border-slate-700/60">
+        <div className="text-2xl">🎬</div>
+        <div className="min-w-0">
+          <p className="text-slate-200 text-sm font-medium truncate">{fileName}</p>
+          <p className="text-slate-500 text-xs">{fmtBytes(fileSize)}</p>
         </div>
-      )}
-
-      {/* Verify button */}
-      <div className="space-y-2.5">
-        <button
-          onClick={() => onVerify(entry.videoHash)}
-          disabled={entry.verifyState === "loading" || entry.verifyState === "valid" || entry.verifyState === "invalid"}
-          className={`w-full py-2.5 rounded-xl text-sm font-medium transition-all
-            ${entry.verifyState === "valid"
-              ? "bg-emerald-900/30 border border-emerald-700/40 text-emerald-400 cursor-default"
-              : entry.verifyState === "loading"
-              ? "bg-slate-800 border border-slate-700 text-slate-400 cursor-wait"
-              : "bg-slate-800 border border-slate-700 text-slate-200 hover:bg-slate-700 hover:border-slate-600 active:scale-[0.98]"
-            }`}
-        >
-          {entry.verifyState === "valid"   ? "✓ Authenticity Verified" :
-           entry.verifyState === "loading" ? "Verifying…"             :
-                                            "🔍 Verify Authenticity"}
-        </button>
-        <AuthenticaBadge state={entry.verifyState} msg={entry.verifyMsg} />
+        <span className="ml-auto flex-shrink-0 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-600/30 text-emerald-400 text-xs font-medium">
+          On Ledger
+        </span>
       </div>
+
+      {/* On-chain details */}
+      <div className="space-y-2">
+        <p className="text-xs text-slate-500 font-mono uppercase tracking-wider">On-Chain Record</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <InfoRow label="Block Number"    value={record.blockNumber.toString()} />
+          <InfoRow label="Registered At"   value={fmtDate(record.timestamp)} mono={false} />
+          <InfoRow label="Publisher"       value={record.publisher} copyable />
+          <InfoRow label="Circuit Outputs" value={`${record.instances.length} public instances`} mono={false} />
+        </div>
+        <InfoRow label="Video Hash (SHA-256)" value={`0x${hash}`} copyable />
+        <InfoRow label="Proof Digest (keccak256 of proof bytes)" value={record.proofDigest} copyable />
+      </div>
+
+      <button
+        onClick={onReset}
+        className="w-full py-2.5 rounded-xl border border-slate-700 text-slate-400 text-sm
+                   hover:border-slate-600 hover:text-slate-200 transition-all"
+      >
+        ← Verify another video
+      </button>
     </motion.div>
   );
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
-export default function VerifierDashboard() {
-  const publicClient = usePublicClient();
-  const chainId      = useChainId();
-  const { isConnected } = useAccount();
-
-  const [entries, setEntries]   = useState<FeedEntry[]>([]);
-  const [loading, setLoading]   = useState(false);
-  const [errMsg,  setErrMsg]    = useState<string | null>(null);
-  const [total,   setTotal]     = useState<bigint>(0n);
-
-  // ── Fetch VideoVerified events ─────────────────────────────────────────────
-  const fetchFeed = useCallback(async () => {
-    if (!publicClient) return;
-    setLoading(true);
-    setErrMsg(null);
-
-    try {
-      const address = getContractAddress(chainId, "VideoRegistry");
-
-      // Read total video count
-      const count = await publicClient.readContract({
-        address,
-        abi: VIDEO_REGISTRY_ABI,
-        functionName: "totalVideos",
-      }) as bigint;
-      setTotal(count);
-
-      if (count === 0n) {
-        setEntries([]);
-        return;
-      }
-
-      // Fetch VideoVerified events (last 10 000 blocks)
-      const logs = await publicClient.getLogs({
-        address,
-        event: {
-          type: "event",
-          name: "VideoVerified",
-          inputs: [
-            { name: "videoHash",   type: "bytes32", indexed: true  },
-            { name: "publisher",   type: "address", indexed: true  },
-            { name: "proofDigest", type: "bytes32", indexed: false },
-            { name: "timestamp",   type: "uint64",  indexed: false },
-            { name: "instances",   type: "uint256[]", indexed: false },
-          ],
-        },
-        fromBlock: "earliest",
-        toBlock:   "latest",
-      });
-
-      const newEntries: FeedEntry[] = logs
-        .reverse()
-        .slice(0, 20)
-        .map((log) => {
-          const args = log.args as {
-            videoHash?:   `0x${string}`;
-            publisher?:   `0x${string}`;
-            proofDigest?: `0x${string}`;
-            timestamp?:   bigint;
-            instances?:   readonly bigint[];
-          };
-          return {
-            videoHash:   args.videoHash   ?? "0x",
-            publisher:   args.publisher   ?? "0x",
-            proofDigest: args.proofDigest ?? "0x",
-            timestamp:   args.timestamp   ?? 0n,
-            instances:   args.instances   ?? [],
-            blockNumber: log.blockNumber  ?? 0n,
-            verifyState: "idle" as const,
-          };
-        });
-
-      setEntries(newEntries);
-    } catch (e: unknown) {
-      setErrMsg(e instanceof Error ? e.message : "Failed to fetch events.");
-    } finally {
-      setLoading(false);
-    }
-  }, [publicClient, chainId]);
-
-  useEffect(() => { fetchFeed(); }, [fetchFeed]);
-
-  // ── Verify one entry on-chain ──────────────────────────────────────────────
-  const handleVerify = useCallback(async (videoHash: `0x${string}`) => {
-    if (!publicClient) return;
-
-    setEntries((prev) =>
-      prev.map((e) =>
-        e.videoHash === videoHash ? { ...e, verifyState: "loading" } : e,
-      ),
-    );
-
-    try {
-      const address = getContractAddress(chainId, "VideoRegistry");
-
-      // Read full record from the contract
-      const record = await publicClient.readContract({
-        address,
-        abi: VIDEO_REGISTRY_ABI,
-        functionName: "getRecord",
-        args: [videoHash],
-      }) as VideoRecord;
-
-      // The on-chain fact that isVerified = true IS the verification.
-      // The smart contract already ran the zk-SNARK pairing check when
-      // publishVideo was called. Reading it here confirms the proof was valid.
-      const isVerified = record.verified;
-
-      setEntries((prev) =>
-        prev.map((e) =>
-          e.videoHash === videoHash
-            ? {
-                ...e,
-                verifyState: isVerified ? "valid" : "invalid",
-                record,
-                verifyMsg: isVerified
-                  ? `On-chain since block ${record.blockNumber} · Publisher ${shortenHash(record.publisher)}`
-                  : undefined,
-              }
-            : e,
-        ),
-      );
-    } catch (err: unknown) {
-      setEntries((prev) =>
-        prev.map((e) =>
-          e.videoHash === videoHash
-            ? { ...e, verifyState: "error", verifyMsg: err instanceof Error ? err.message : "Unknown error" }
-            : e,
-        ),
-      );
-    }
-  }, [publicClient, chainId]);
-
-  // ── Render ─────────────────────────────────────────────────────────────────
+function NotFoundPanel({ hash, fileName, fileSize, onReset }: {
+  hash: string; fileName: string; fileSize: number; onReset: () => void;
+}) {
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2.5">
-            <div className="relative flex items-center justify-center w-10 h-10">
-              <div className="absolute inset-0 rounded-full bg-emerald-500/20 blur-md" />
-              <div className="relative text-emerald-400">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064" />
-                </svg>
-              </div>
-            </div>
-            Public Verifier
-            <span className="text-xs font-normal text-slate-500 ml-1 font-mono">OPEN LEDGER</span>
-          </h2>
-          <p className="text-slate-400 text-sm mt-0.5">
-            Trustless verification — every proof anchored immutably on-chain.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          {total > 0n && (
-            <span className="text-slate-400 text-sm font-mono">
-              {total.toString()} video{total !== 1n ? "s" : ""} on ledger
-            </span>
-          )}
-          <button
-            onClick={fetchFeed}
-            disabled={loading}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm text-slate-300
-                       bg-slate-800 border border-slate-700 hover:border-slate-600 transition-all"
-          >
-            <motion.svg
-              className="w-3.5 h-3.5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              animate={loading ? { rotate: 360 } : {}}
-              transition={loading ? { duration: 1, repeat: Infinity, ease: "linear" } : {}}
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </motion.svg>
-            Refresh
-          </button>
+    <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+      <div className="relative overflow-hidden rounded-2xl border border-red-800/40 bg-red-950/20 p-5">
+        <div className="absolute -top-8 -right-8 w-32 h-32 rounded-full bg-red-500/10 blur-2xl" />
+        <div className="relative flex items-start gap-4">
+          <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-red-500/10 border border-red-700/40 flex items-center justify-center">
+            <svg className="w-6 h-6 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.924-.833-2.464 0L4.35 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-red-300 font-bold text-base">Not Found on Blockchain</p>
+            <p className="text-slate-400 text-sm mt-0.5">
+              No record exists for this video&apos;s hash. It was either not processed by Authentica,
+              or the file has been modified since processing.
+            </p>
+          </div>
         </div>
       </div>
 
-      {/* Error state */}
-      {errMsg && !loading && (
-        <div className="p-4 rounded-xl bg-red-950/40 border border-red-800/50 text-red-300 text-sm font-mono">
-          {errMsg}
-          <br />
-          <span className="text-red-500 text-xs">
-            Make sure the contracts are deployed and NEXT_PUBLIC_REGISTRY_ADDRESS_LOCAL is set.
-          </span>
+      <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-800/40 border border-slate-700/60">
+        <div className="text-2xl">🎬</div>
+        <div className="min-w-0">
+          <p className="text-slate-200 text-sm font-medium truncate">{fileName}</p>
+          <p className="text-slate-500 text-xs">{fmtBytes(fileSize)}</p>
         </div>
-      )}
+        <span className="ml-auto flex-shrink-0 px-2.5 py-1 rounded-full bg-red-500/10 border border-red-700/30 text-red-400 text-xs font-medium">
+          Unknown
+        </span>
+      </div>
 
-      {/* Loading skeleton */}
-      {loading && (
-        <div className="space-y-4">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5 animate-pulse">
-              <div className="flex gap-3">
-                <div className="w-10 h-10 rounded-xl bg-slate-800" />
-                <div className="flex-1 space-y-2">
-                  <div className="h-3.5 bg-slate-800 rounded w-1/3" />
-                  <div className="h-2.5 bg-slate-800 rounded w-1/2" />
-                </div>
-              </div>
-              <div className="h-10 bg-slate-800 rounded-xl mt-4" />
-              <div className="h-9 bg-slate-800 rounded-xl mt-3" />
-            </div>
+      <InfoRow label="Computed SHA-256 Hash (not in registry)" value={`0x${hash}`} copyable />
+
+      <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-700/50 text-xs text-slate-500 space-y-1">
+        <p className="text-slate-400 font-medium">Why might this happen?</p>
+        <p>• The video was not processed by the Authentica pipeline</p>
+        <p>• The video file was modified or re-encoded after processing</p>
+        <p>• The publisher used a different blockchain network</p>
+      </div>
+
+      <button onClick={onReset} className="w-full py-2.5 rounded-xl border border-slate-700 text-slate-400 text-sm hover:border-slate-600 hover:text-slate-200 transition-all">
+        ← Try another video
+      </button>
+    </motion.div>
+  );
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+export default function VerifierDashboard() {
+  const publicClient = usePublicClient();
+  const chainId      = useChainId();
+  const [stage, setStage] = useState<Stage>({ kind: "idle" });
+
+  const handleFile = useCallback(async (file: File) => {
+    setStage({ kind: "hashing", fileName: file.name, fileSize: file.size });
+
+    let hash: string;
+    try {
+      const buf = await file.arrayBuffer();
+      hash = await sha256hex(buf);
+    } catch {
+      setStage({ kind: "error", msg: "Failed to compute SHA-256 of the file." });
+      return;
+    }
+
+    setStage({ kind: "querying", hash, fileName: file.name, fileSize: file.size });
+
+    if (!publicClient) {
+      setStage({ kind: "error", msg: "No blockchain connection. Connect your wallet." });
+      return;
+    }
+
+    try {
+      const address  = getContractAddress(chainId, "VideoRegistry");
+      const hashHex  = `0x${hash}` as `0x${string}`;
+
+      const isVerified = await publicClient.readContract({
+        address,
+        abi:          VIDEO_REGISTRY_ABI,
+        functionName: "isVerified",
+        args:         [hashHex],
+      }) as boolean;
+
+      if (!isVerified) {
+        setStage({ kind: "notfound", hash, fileName: file.name, fileSize: file.size });
+        return;
+      }
+
+      const record = await publicClient.readContract({
+        address,
+        abi:          VIDEO_REGISTRY_ABI,
+        functionName: "getRecord",
+        args:         [hashHex],
+      }) as VideoRecord;
+
+      setStage({ kind: "found", hash, record, fileName: file.name, fileSize: file.size });
+    } catch (e: unknown) {
+      setStage({ kind: "error", msg: e instanceof Error ? e.message : "Blockchain query failed." });
+    }
+  }, [publicClient, chainId]);
+
+  const reset = () => setStage({ kind: "idle" });
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div>
+        <h2 className="text-xl font-bold text-white flex items-center gap-2.5">
+          <div className="relative w-9 h-9 flex items-center justify-center">
+            <div className="absolute inset-0 rounded-full bg-emerald-500/20 blur-md" />
+            <svg className="relative w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+          </div>
+          Verify Authenticity
+          <span className="text-xs font-normal text-slate-500 font-mono">OPEN LEDGER</span>
+        </h2>
+        <p className="text-slate-400 text-sm mt-0.5">
+          Drop any blurred video to check if it was certified by Authentica&apos;s zkML pipeline.
+        </p>
+      </div>
+
+      {/* Explainer pills */}
+      {stage.kind === "idle" && (
+        <div className="flex flex-wrap gap-2">
+          {[
+            { icon: "🔒", text: "File never leaves your device" },
+            { icon: "⛓",  text: "Proof verified on-chain" },
+            { icon: "⚡",  text: "Instant SHA-256 lookup" },
+          ].map((p) => (
+            <span key={p.text} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800/60 border border-slate-700/60 text-xs text-slate-400">
+              {p.icon} {p.text}
+            </span>
           ))}
         </div>
       )}
 
-      {/* Empty state */}
-      {!loading && entries.length === 0 && !errMsg && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="flex flex-col items-center justify-center py-20 text-center"
-        >
-          <div className="text-5xl mb-4">📭</div>
-          <p className="text-slate-300 font-medium">No verified videos yet</p>
-          <p className="text-slate-500 text-sm mt-1.5 max-w-xs">
-            Use the Publisher tab to upload a video and generate a proof.
-            It will appear here once anchored on-chain.
-          </p>
-        </motion.div>
-      )}
+      {/* State machine */}
+      <AnimatePresence mode="wait">
+        {/* Idle — show drop zone */}
+        {stage.kind === "idle" && (
+          <motion.div key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <DropZone onFile={handleFile} />
+          </motion.div>
+        )}
 
-      {/* Feed */}
-      {!loading && entries.length > 0 && (
-        <div className="space-y-4">
-          <AnimatePresence>
-            {entries.map((entry, i) => (
-              <VideoCard
-                key={entry.videoHash}
-                entry={entry}
-                onVerify={handleVerify}
-                index={i}
-              />
-            ))}
-          </AnimatePresence>
-        </div>
-      )}
+        {/* Hashing */}
+        {stage.kind === "hashing" && (
+          <motion.div key="hashing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="flex flex-col items-center justify-center gap-4 py-16 rounded-2xl border border-slate-800 bg-slate-950/40">
+            <Spinner size={8} />
+            <div className="text-center">
+              <p className="text-slate-200 font-medium text-sm">Computing SHA-256…</p>
+              <p className="text-slate-500 text-xs mt-1 font-mono truncate max-w-xs">{stage.fileName}</p>
+              <p className="text-slate-600 text-xs mt-0.5">{fmtBytes(stage.fileSize)}</p>
+            </div>
+            <p className="text-slate-600 text-xs">Processing locally — nothing is uploaded</p>
+          </motion.div>
+        )}
 
-      {/* Legend */}
-      {!loading && entries.length > 0 && (
-        <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/60 text-xs text-slate-500 space-y-1">
-          <p className="text-slate-400 font-medium mb-2">How verification works</p>
-          <p>
-            1. When a video is published, the smart contract runs the zk-SNARK pairing check on-chain.
-          </p>
-          <p>
-            2. Clicking "Verify Authenticity" calls <code className="font-mono text-slate-400">getRecord()</code> — confirming the entry is immutably stored.
-          </p>
-          <p>
-            3. The proof digest lets anyone re-verify the original proof bytes against the circuit's verification key off-chain.
-          </p>
-        </div>
-      )}
+        {/* Querying */}
+        {stage.kind === "querying" && (
+          <motion.div key="querying" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="flex flex-col items-center justify-center gap-4 py-16 rounded-2xl border border-slate-800 bg-slate-950/40">
+            <Spinner size={8} />
+            <div className="text-center space-y-1">
+              <p className="text-slate-200 font-medium text-sm">Querying blockchain…</p>
+              <p className="text-slate-500 text-xs font-mono">isVerified({short(`0x${stage.hash}`, 8)})</p>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Found */}
+        {stage.kind === "found" && (
+          <motion.div key="found" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <FoundPanel
+              record={stage.record}
+              hash={stage.hash}
+              fileName={stage.fileName}
+              fileSize={stage.fileSize}
+              onReset={reset}
+            />
+          </motion.div>
+        )}
+
+        {/* Not found */}
+        {stage.kind === "notfound" && (
+          <motion.div key="notfound" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <NotFoundPanel
+              hash={stage.hash}
+              fileName={stage.fileName}
+              fileSize={stage.fileSize}
+              onReset={reset}
+            />
+          </motion.div>
+        )}
+
+        {/* Error */}
+        {stage.kind === "error" && (
+          <motion.div key="error" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="space-y-4">
+            <div className="p-4 rounded-xl bg-red-950/40 border border-red-800/50 text-red-300 text-sm font-mono">
+              ⚠ {stage.msg}
+            </div>
+            <button onClick={reset} className="w-full py-2.5 rounded-xl border border-slate-700 text-slate-400 text-sm hover:border-slate-600 hover:text-slate-200 transition-all">
+              ← Try again
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

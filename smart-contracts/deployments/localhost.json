@@ -1,0 +1,16 @@
+{
+  "network": "localhost",
+  "deployedAt": "2026-08-08T12:36:39.822Z",
+  "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "verifier": {
+    "address": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
+    "txHash": "0xa4a69dc98fae43438aedf0b5c32424d275ce074330ef35a2b819de7e1f9c1dfe",
+    "gasUsed": "1878647"
+  },
+  "videoRegistry": {
+    "address": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6",
+    "txHash": "0x66e24095576247f1a4f5e6db816cb7f2f53b32b0384eeade9e3633c06bb3d3f8",
+    "gasUsed": "1391488",
+    "verifierArg": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
+  }
+}

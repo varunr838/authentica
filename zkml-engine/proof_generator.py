@@ -34,6 +34,9 @@ import pathlib
 import sys
 import time
 
+if sys.stdout.encoding.lower() != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
+
 import numpy as np
 
 try:
@@ -144,11 +147,10 @@ async def generate_witness(input_json: pathlib.Path) -> None:
     """
     log("Generating witness (execution trace) …")
     with _Timed("gen_witness"):
-        res = await ezkl.gen_witness(
+        res = ezkl.gen_witness(
             data=str(input_json),
             model=str(COMPILED_MODEL),
             output=str(WITNESS_JSON),
-            settings_path=str(SETTINGS_JSON),
         )
     if not res:
         err("gen_witness returned False — check inputs and compiled circuit.")
@@ -170,7 +172,6 @@ async def generate_proof() -> None:
             pk_path=str(PK_PATH),
             proof_path=str(PROOF_JSON),
             srs_path=str(SRS_PATH),
-            proof_type="single",         # single-circuit proof
         )
     if not res:
         err("prove returned False — check witness and keys.")

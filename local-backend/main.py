@@ -18,8 +18,21 @@ Run
 ---
   uvicorn main:app --reload --port 8000
 """
-
+# --- Add these imports at the top of main.py ---
 from __future__ import annotations
+import hashlib
+from sqlalchemy.orm import Session
+from fastapi import Depends
+
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from database import models
+from database.database import engine, get_db
+
+models.Base.metadata.create_all(bind=engine)
+
 
 import asyncio
 import io
@@ -64,10 +77,6 @@ UPLOAD_DIR = _HERE / "uploads"
 OUTPUT_DIR = _HERE / "output"
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
-
-# ── Job store (in-memory — replace with Redis for production) ─────────────────
-_JOBS: dict[str, "JobRecord"] = {}
-
 
 # ── Models ────────────────────────────────────────────────────────────────────
 class JobStatus(str, Enum):

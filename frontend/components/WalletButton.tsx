@@ -3,6 +3,7 @@
  * components/WalletButton.tsx
  * MetaMask connect/disconnect button with address display.
  */
+import { useState, useEffect } from "react";
 import { useAccount, useConnect, useDisconnect, useChainId } from "wagmi";
 import { injected } from "wagmi/connectors";
 import { motion } from "framer-motion";
@@ -14,11 +15,18 @@ const CHAIN_NAMES: Record<number, string> = {
 };
 
 export default function WalletButton() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const { address, isConnected } = useAccount();
   const { connect }              = useConnect();
   const { disconnect }           = useDisconnect();
   const chainId                  = useChainId();
   const chainName                = CHAIN_NAMES[chainId] ?? `Chain ${chainId}`;
+
+  if (!mounted) {
+    return <div className="w-[140px] h-[36px]" />; // Prevents layout shift
+  }
 
   if (isConnected && address) {
     return (

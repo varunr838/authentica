@@ -17,7 +17,7 @@ pragma solidity ^0.8.24;
 //
 //    On-chain (this contract):
 //      5. publishVideo(videoHash, proof, instances) is called.
-//      6. VideoRegistry calls Verifier.verify(proof, instances).
+//      6. VideoRegistry calls Verifier.verifyProof(proof, instances).
 //      7. If valid → record is stored permanently; VideoVerified is emitted.
 //      8. Anyone can call isVerified(videoHash) to check authenticity.
 //
@@ -26,7 +26,11 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
-import "./Verifier.sol";
+// Import only the interface — NOT Verifier.sol directly.
+// Importing Verifier.sol would force the 1427-line Halo2Verifier assembly
+// into the same compilation unit as VideoRegistry, overwhelming the Yul
+// stack optimizer and causing "too deep in the stack" errors.
+import "./IVerifier.sol";
 
 /// @title  VideoRegistry — Authentica immutable media authenticity ledger
 /// @author Authentica Team
@@ -58,7 +62,7 @@ contract VideoRegistry is Ownable, ReentrancyGuard, Pausable {
 
     // ── State ─────────────────────────────────────────────────────────────────
 
-    /// @notice The EZKL-generated zk-SNARK verifier contract.
+    /// @notice The EZKL-generated zk-SNARK verifier contract (referenced via interface).
     IVerifier public verifier;
 
     /// @notice videoHash → VideoRecord
@@ -102,7 +106,7 @@ contract VideoRegistry is Ownable, ReentrancyGuard, Pausable {
     /// @notice Submit a zk-SNARK proof that the PixelationFilter CNN was applied
     ///         to a video and store the verified record permanently.
     ///
-    /// @dev    Calls Verifier.verify() — if it returns false the tx reverts.
+    /// @dev    Calls Verifier.verifyProof() — if it returns false the tx reverts.
     ///         Gas note: the BN254 pairing check in the real EZKL verifier
     ///         costs ~600 000 gas.  Plan accordingly.
     ///
@@ -132,7 +136,7 @@ contract VideoRegistry is Ownable, ReentrancyGuard, Pausable {
         // This is the critical step. The Verifier contract performs elliptic
         // curve pairing operations (BN254) to confirm the proof is valid without
         // needing to know the original unblurred video or the model weights.
-        bool valid = verifier.verify(proof, instances);
+        bool valid = verifier.verifyProof(proof, instances);
         if (!valid) revert InvalidProof();
 
         // ── Persist record ────────────────────────────────────────────────────

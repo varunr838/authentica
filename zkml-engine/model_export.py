@@ -141,15 +141,21 @@ def export_onnx(model: nn.Module, device: torch.device) -> None:
     model.eval()
     dummy = torch.zeros(1, IN_CHANNELS, PATCH_H, PATCH_W, device=device)
 
+    # dynamo=False  → forces the legacy TorchScript exporter so opset 11 is honoured.
+    # PyTorch 2.4+  → dynamo=True by default, always exports at opset 18 (EZKL unsupported).
+    # dynamic_axes MUST be omitted → EZKL's tract backend requires a fully static graph.
+    # Any symbolic dimension (Sym0) will cause "Undetermined symbol" in gen_settings.
     torch.onnx.export(
         model,
         dummy,
         str(ONNX_PATH),
         opset_version=11,
+        dynamo=False,
         input_names=["input"],
         output_names=["output"],
-        dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}},
+        # NO dynamic_axes — EZKL needs batch=1 baked in as a static shape
     )
+
     success(f"ONNX model exported → {ONNX_PATH}")
 
 
@@ -160,7 +166,7 @@ def make_input_json() -> None:
     Each element is a *flattened* list of float32 values.
     """
     rng = np.random.default_rng(SEED + 1)
-    tensor = rng.standard_normal((1, IN_CHANNELS, PATCH_H, PATCH_W)).astype(np.float32)
+    tensor = rng.uniform(-1.0, 1.0, (1, IN_CHANNELS, PATCH_H, PATCH_W)).astype(np.float32)
 
     payload = {
         "input_shapes": [[IN_CHANNELS, PATCH_H, PATCH_W]],

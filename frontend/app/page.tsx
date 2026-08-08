@@ -149,20 +149,34 @@ export default function HomePage() {
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
         <HeroBanner />
 
-        {/* Two-column layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left — always show publisher */}
-          <div className="relative rounded-2xl border border-slate-800 bg-slate-900/50 backdrop-blur-sm p-6 noise-bg">
-            <div className="absolute top-3 right-3 w-2 h-2 rounded-full bg-cyan-500/60 animate-pulse" />
-            <PublisherDashboard />
-          </div>
-
-          {/* Right — always show verifier */}
-          <div className="relative rounded-2xl border border-slate-800 bg-slate-900/50 backdrop-blur-sm p-6 noise-bg">
-            <div className="absolute top-3 right-3 w-2 h-2 rounded-full bg-emerald-500/60 animate-pulse" />
-            <VerifierDashboard />
-          </div>
-        </div>
+        {/* Tab panel */}
+        <AnimatePresence mode="wait">
+          {activeTab === "publisher" ? (
+            <motion.div
+              key="publisher"
+              initial={{ opacity: 0, x: -16 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 16 }}
+              transition={{ duration: 0.22, ease: "easeInOut" }}
+              className="relative rounded-2xl border border-slate-800 bg-slate-900/50 backdrop-blur-sm p-6 noise-bg"
+            >
+              <div className="absolute top-3 right-3 w-2 h-2 rounded-full bg-cyan-500/60 animate-pulse" />
+              <PublisherDashboard />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="verifier"
+              initial={{ opacity: 0, x: 16 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -16 }}
+              transition={{ duration: 0.22, ease: "easeInOut" }}
+              className="relative rounded-2xl border border-slate-800 bg-slate-900/50 backdrop-blur-sm p-6 noise-bg"
+            >
+              <div className="absolute top-3 right-3 w-2 h-2 rounded-full bg-emerald-500/60 animate-pulse" />
+              <VerifierDashboard />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Footer */}
         <footer className="mt-12 border-t border-slate-800/60 pt-8 flex flex-wrap items-center justify-between gap-4 text-xs text-slate-600 font-mono">

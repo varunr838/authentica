@@ -21,8 +21,8 @@ export const wagmiConfig = createConfig({
   chains: SUPPORTED_CHAINS,
   connectors: [injected()],           // MetaMask / browser wallet
   transports: {
-    [hardhat.id]:  http("http://127.0.0.1:8545"),
-    [sepolia.id]:  http(),            // Uses default Sepolia public RPC
+    [hardhat.id]: http("http://127.0.0.1:8545"),
+    [sepolia.id]: http(),            // Uses default Sepolia public RPC
   },
   ssr: false,
 });
@@ -31,12 +31,12 @@ export const wagmiConfig = createConfig({
 // Update these after running `npm run deploy:local` or `npm run deploy:sepolia`
 export const CONTRACT_ADDRESSES = {
   [hardhat.id]: {
-    VideoRegistry: (process.env.NEXT_PUBLIC_REGISTRY_ADDRESS_LOCAL  ?? "") as `0x${string}`,
-    Verifier:      (process.env.NEXT_PUBLIC_VERIFIER_ADDRESS_LOCAL   ?? "") as `0x${string}`,
+    VideoRegistry: (process.env.NEXT_PUBLIC_REGISTRY_ADDRESS_LOCAL ?? "") as `0x${string}`,
+    Verifier: (process.env.NEXT_PUBLIC_VERIFIER_ADDRESS_LOCAL ?? "") as `0x${string}`,
   },
   [sepolia.id]: {
     VideoRegistry: (process.env.NEXT_PUBLIC_REGISTRY_ADDRESS_SEPOLIA ?? "") as `0x${string}`,
-    Verifier:      (process.env.NEXT_PUBLIC_VERIFIER_ADDRESS_SEPOLIA  ?? "") as `0x${string}`,
+    Verifier: (process.env.NEXT_PUBLIC_VERIFIER_ADDRESS_SEPOLIA ?? "") as `0x${string}`,
   },
 } as const;
 
@@ -59,7 +59,7 @@ export const VIDEO_REGISTRY_ABI = [
     stateMutability: "nonpayable",
     inputs: [
       { name: "videoHash", type: "bytes32" },
-      { name: "proof",     type: "bytes"   },
+      { name: "proof", type: "bytes" },
       { name: "instances", type: "uint256[]" },
     ],
     outputs: [],
@@ -88,13 +88,13 @@ export const VIDEO_REGISTRY_ABI = [
       {
         type: "tuple",
         components: [
-          { name: "videoHash",   type: "bytes32"   },
-          { name: "publisher",   type: "address"   },
-          { name: "timestamp",   type: "uint64"    },
-          { name: "blockNumber", type: "uint64"    },
-          { name: "proofDigest", type: "bytes32"   },
-          { name: "instances",   type: "uint256[]" },
-          { name: "verified",    type: "bool"      },
+          { name: "videoHash", type: "bytes32" },
+          { name: "publisher", type: "address" },
+          { name: "timestamp", type: "uint64" },
+          { name: "blockNumber", type: "uint64" },
+          { name: "proofDigest", type: "bytes32" },
+          { name: "instances", type: "uint256[]" },
+          { name: "verified", type: "bool" },
         ],
       },
     ],
@@ -105,7 +105,7 @@ export const VIDEO_REGISTRY_ABI = [
     stateMutability: "view",
     inputs: [
       { name: "offset", type: "uint256" },
-      { name: "limit",  type: "uint256" },
+      { name: "limit", type: "uint256" },
     ],
     outputs: [{ name: "result", type: "bytes32[]" }],
   },
@@ -128,11 +128,11 @@ export const VIDEO_REGISTRY_ABI = [
     name: "VideoVerified",
     type: "event",
     inputs: [
-      { name: "videoHash",   type: "bytes32", indexed: true  },
-      { name: "publisher",   type: "address", indexed: true  },
+      { name: "videoHash", type: "bytes32", indexed: true },
+      { name: "publisher", type: "address", indexed: true },
       { name: "proofDigest", type: "bytes32", indexed: false },
-      { name: "timestamp",   type: "uint64",  indexed: false },
-      { name: "instances",   type: "uint256[]", indexed: false },
+      { name: "timestamp", type: "uint64", indexed: false },
+      { name: "instances", type: "uint256[]", indexed: false },
     ],
   },
   {
@@ -152,7 +152,7 @@ export const VERIFIER_ABI = [
     type: "function",
     stateMutability: "view",
     inputs: [
-      { name: "proof",     type: "bytes"     },
+      { name: "proof", type: "bytes" },
       { name: "instances", type: "uint256[]" },
     ],
     outputs: [{ type: "bool" }],
@@ -165,24 +165,24 @@ export const BACKEND_URL =
 
 // ── Types ──────────────────────────────────────────────────────────────────
 export interface VideoRecord {
-  videoHash:   `0x${string}`;
-  publisher:   `0x${string}`;
-  timestamp:   bigint;
+  videoHash: `0x${string}`;
+  publisher: `0x${string}`;
+  timestamp: bigint;
   blockNumber: bigint;
   proofDigest: `0x${string}`;
-  instances:   readonly bigint[];
-  verified:    boolean;
+  instances: readonly bigint[];
+  verified: boolean;
 }
 
 export interface JobStatus {
-  job_id:       string;
-  status:       "pending" | "processing" | "publishing" | "done" | "failed";
-  video_hash:   string | null;
-  tx_hash:      string | null;
+  job_id: string;
+  status: "pending" | "processing" | "publishing" | "done" | "failed";
+  video_hash: string | null;
+  tx_hash: string | null;
   block_number: number | null;
-  gas_used:     number | null;
-  frame_count:  number | null;
-  error:        string | null;
+  gas_used: number | null;
+  frame_count: number | null;
+  error: string | null;
 }
 
 export type PipelineStep =
